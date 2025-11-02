@@ -19,8 +19,8 @@ import hashlib
 import struct
 import hmac
 
-__id__ = "secure_chat"
-__name__ = "Secure Chat"
+__id__ = "chat_encryption"
+__name__ = "Chat Encryption"
 __description__ = "A plugin that provides end-to-end encrypted chat functionality."
 __author__ = "@abyn0x & @setsufluff"
 __version__ = "1.2.4"
