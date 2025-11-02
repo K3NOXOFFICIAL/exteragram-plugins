@@ -1,0 +1,86 @@
+# =============================================================================
+# IMPORTS
+# =============================================================================
+from base_plugin import BasePlugin
+import urllib.request
+import json
+import os
+from ui.settings import Header, Text
+from android_utils import run_on_ui_thread
+from ui.bulletin import BulletinHelper
+
+# =============================================================================
+# PLUGIN METADATA
+# =============================================================================
+__id__ = "github_lib"
+__name__ = "Setsu Plugin Lib"
+__description__ = "Fetch and install plugins from the GitHub repository."
+__author__ = "@setsufluff"
+__version__ = "1.0.0"
+__icon__ = "exteraPlugins/1"
+__min_version__ = "11.12.0"
+
+# =============================================================================
+# MAIN PLUGIN CLASS
+# =============================================================================
+
+class GithubRepoPlugin(BasePlugin):
+    """Main plugin class for fetching and installing plugins from GitHub"""
+
+    def __init__(self):
+        """Initialize the plugin"""
+        super().__init__()
+
+    def on_plugin_load(self):
+        """Called when the plugin is loaded"""
+        self.log("Plugin Repository loaded!")
+
+    def on_plugin_unload(self):
+        """Called when the plugin is unloaded"""
+        self.log("Plugin Repository unloaded!")
+        pass
+
+    def create_settings(self):
+        """Create the settings UI for the plugin"""
+        plugins = self.fetch_plugins()
+        components = [Header(text="Available Plugins from GitHub")]
+        for plugin in plugins:
+            components.append(Text(
+                text=f"Install {plugin}",
+                subtext="Click to download and install this plugin",
+                icon="download",
+                on_click=lambda p=plugin: self.install_plugin(p)
+            ))
+        if not plugins:
+            components.append(Text(
+                text="No plugins found or failed to fetch",
+                subtext="Check your internet connection"
+            ))
+        return components
+
+    def fetch_plugins(self):
+        """Fetch list of plugins from GitHub repository"""
+        url = "https://api.github.com/repos/K3NOXOFFICIAL/exteragram-plugins/contents/"
+        try:
+            with urllib.request.urlopen(url) as response:
+                data = json.loads(response.read().decode())
+            plugins = [item['name'] for item in data if isinstance(item, dict) and item.get('name', '').endswith('.plugin')]
+            return plugins
+        except Exception as e:
+            self.log(f"Failed to fetch plugins: {e}")
+            return []
+
+    def install_plugin(self, name):
+        """Install a plugin by downloading it from GitHub"""
+        url = f"https://raw.githubusercontent.com/K3NOXOFFICIAL/exteragram-plugins/Main/{name}"
+        plugins_dir = "/data/user/0/com.exteragram.messenger/files/plugins/"
+        path = os.path.join(plugins_dir, name)
+        try:
+            with urllib.request.urlopen(url) as response:
+                content = response.read().decode('utf-8')
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            run_on_ui_thread(lambda: BulletinHelper.show_error(f"Successfully installed {name}. Restart Exteragram to load it."))
+        except Exception as e:
+            self.log(f"Failed to install {name}: {e}")
+            run_on_ui_thread(lambda: BulletinHelper.show_error(f"Failed to install {name}: {str(e)}"))
