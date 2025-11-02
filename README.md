@@ -24,6 +24,7 @@ Once installed, the plugin will automatically encrypt messages in supported chat
 
 - To enable encryption for a chat: Right-click on the chat and select "Enable Secure Chat".
 - To disable: Right-click and select "Disable Secure Chat".
+- **Settings**: Access the plugin settings via Exteragram's plugin settings menu to configure auto-decryption, view keys, and set defaults.
 
 ## Commands
 
