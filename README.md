@@ -1,51 +1,65 @@
-# Secure Chat Plugin for Exteragram
 
-## Overview
+# Exteragram Plugin Collection
 
-Secure Chat is an encryption plugin designed for Exteragram, a Telegram client. This plugin enhances the security of your conversations by providing end-to-end encryption features, ensuring that your messages remain private and protected from unauthorized access.
+This repository contains multiple plugins for [Exteragram](https://t.me/exteraGramCI), a Telegram client. Each plugin adds unique features to enhance your chat experience. Below you'll find a description of each plugin and instructions for installation and usage.
 
-## Features
+---
 
-- **End-to-End Encryption**: Encrypts messages before sending and decrypts them upon receipt.
-- **Secure Key Management**: Handles encryption keys securely within the plugin.
-- **Compatibility**: Seamlessly integrates with Exteragram's interface.
-- **Lightweight**: Minimal impact on performance.
+## Plugins
+
+### 1. Secure Chat Plugin (`secure_chat.plugin`)
+
+**Description:**
+Provides end-to-end encrypted chat functionality for Exteragram. Messages sent with `.enc` or `.encrypt` commands are encrypted using ChaCha20Poly1305 and automatically decrypted on receipt. Per-chat keys are managed securely, and the plugin integrates with the UI for notifications and settings.
+
+**Features:**
+- End-to-end encryption for messages
+- Per-chat key management
+- Automatic decryption of incoming encrypted messages
+- UI integration for notifications and settings
+
+**Commands:**
+- `.enc <message>` or `.encrypt <message>`: Encrypt and send a message
+- `.setkey <key>`: Set encryption key for current chat
+- `.exportkey`: Show current chat's key
+- `.importkey <key>`: Import key for current chat
+- `.showkeys`: List all set keys (truncated)
+
+**Requirements:**
+- Exteragram v11.12.0 or higher
+
+---
+
+### 2. Setsu Plugin Lib (`setsu_plugin_lib.plugin`)
+
+**Description:**
+Allows you to fetch and install plugins directly from a GitHub repository. The plugin provides a settings UI to configure the repository owner, name, and branch, and displays available plugins for installation. Useful for managing and updating plugins from a central source.
+
+**Features:**
+- Fetch list of plugins from GitHub
+- Install plugins with one click
+- Configurable repository owner, name, and branch
+- UI integration for plugin management
+
+**Requirements:**
+- Exteragram v11.12.0 or higher
+
+---
 
 ## Installation
 
-1. Download the plugin file `secure_chat.plugin` from the releases section.
-2. Open Exteragram and navigate to the plugins section.
+1. Download the desired `.plugin` file(s) from this repository or releases.
+2. Open Exteragram and go to the plugins section.
 3. Install the plugin by selecting the downloaded file.
-4. Enable the plugin in the plugin in the plugin menu.
+4. Enable the plugin in the plugin menu.
 
 ## Usage
 
-Once installed, the plugin will automatically encrypt messages in supported chats. No additional configuration is required for basic usage.
-
-- To enable encryption for a chat: Right-click on the chat and select "Enable Secure Chat".
-- To disable: Right-click and select "Disable Secure Chat".
-- **Settings**: Access the plugin settings via Exteragram's plugin settings menu to configure auto-decryption, view keys, and set defaults.
-
-## Commands
-
-The plugin supports the following commands, which must be prefixed with a dot (.).
-
-- `.setkey <key>`: Sets the encryption key for the current chat. This key is required to encrypt and decrypt messages in this chat. Replace `<key>` with your chosen password or passphrase.
-- `.enc <message>` or `.encrypt <message>`: Encrypts the specified message using the set key and sends it. If no key is set for the chat, the command will be canceled with an error message.
-- `.exportkey`: Displays the encryption key for the current chat via a bulletin notification.
-- `.importkey <key>`: Imports and sets the provided key for the current chat.
-- `.showkeys`: Lists all set keys for chats via a bulletin notification (truncated for security).
-
-Encrypted messages are automatically decrypted when received. If a message cannot be decrypted (e.g., no key set), it will display as "[NO KEY]" or "[ERROR]" followed by the encrypted text.
-
-## Requirements
-
-- Exteragram version 11.12.0 or higher (check compatibility in releases).
-
+Refer to each plugin's section above for specific commands and features. Settings for each plugin can be accessed via Exteragram's plugin settings menu.
 
 ## Contributing
 
-Contributions are welcome! Please fork the repository and submit a pull request with your improvements.
+Contributions are welcome! Fork the repository and submit a pull request with your improvements or new plugins.
 
 ## License
 
