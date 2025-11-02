@@ -25,6 +25,15 @@ Once installed, the plugin will automatically encrypt messages in supported chat
 - To enable encryption for a chat: Right-click on the chat and select "Enable Secure Chat".
 - To disable: Right-click and select "Disable Secure Chat".
 
+## Commands
+
+The plugin supports the following commands, which must be prefixed with a dot (.):
+
+- `.setkey <key>`: Sets the encryption key for the current chat. This key is required to encrypt and decrypt messages in this chat. Replace `<key>` with your chosen password or passphrase.
+- `.enc <message>` or `.encrypt <message>`: Encrypts the specified message using the set key and sends it. If no key is set for the chat, the command will be canceled with an error message.
+
+Encrypted messages are automatically decrypted when received. If a message cannot be decrypted (e.g., no key set), it will display as "[NO KEY]" or "[ERROR]" followed by the encrypted text.
+
 ## Requirements
 
 - Exteragram version 11.12.0 or higher (check compatibility in releases).
