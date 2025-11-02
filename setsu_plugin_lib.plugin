@@ -1,0 +1,150 @@
+# =============================================================================
+# IMPORTS
+# =============================================================================
+from base_plugin import BasePlugin
+import requests
+import json
+import os
+from ui.settings import Header, Input, Divider, Switch, Selector, Text, EditText
+from android_utils import run_on_ui_thread
+from ui.bulletin import BulletinHelper
+from client_utils import get_last_fragment
+
+# =============================================================================
+# PLUGIN METADATA
+# =============================================================================
+__id__ = "github_lib"
+__name__ = "Setsu Plugin Lib"
+__description__ = "Fetch and install plugins from the GitHub repository."
+__author__ = "@setsufluff"
+__version__ = "1.1.5"
+__icon__ = "exteraPlugins/1"
+__min_version__ = "11.12.0"
+
+# =============================================================================
+# MAIN PLUGIN CLASS
+# =============================================================================
+
+class GithubLibPlugin(BasePlugin):
+    """Main plugin class for fetching and installing plugins from GitHub"""
+
+    def __init__(self):
+        """Initialize the plugin"""
+        super().__init__()
+
+    def on_plugin_load(self):
+        """Called when the plugin is loaded"""
+        self.available_plugins = self.fetch_plugins()
+        self.log(f"Fetched {len(self.available_plugins)} plugins")
+        self.log("Plugin Repository loaded!")
+
+    def on_plugin_unload(self):
+        """Called when the plugin is unloaded"""
+        self.log("Plugin Repository unloaded!")
+        pass
+
+    def _refresh_settings_page(self):
+        """Пересобирает страницу настроек, чтобы отобразить изменения."""
+        try:
+            fragment = get_last_fragment()
+            if fragment and hasattr(fragment, "rebuildAllFragments"):
+                fragment.rebuildAllFragments(True)
+        except Exception as e:
+            self.log(f"Не удалось обновить страницу настроек: {e}")
+
+    def _refresh_list(self, view):
+        """Обновляет список плагинов и пересобирает настройки."""
+        self.available_plugins = self.fetch_plugins()
+        self._refresh_settings_page()
+
+    def create_settings(self):
+        """Create the settings UI for the plugin"""
+        components = [
+            Header(text="GitHub Repository Settings"),
+            Input(
+                key="owner",
+                text="Repository Owner",
+                default="K3NOXOFFICIAL",
+                subtext="The GitHub username or organization owning the repository.",
+                icon="msg_recent_solar"
+            ),
+            Input(
+                key="repo",
+                text="Repository Name",
+                default="exteragram-plugins",
+                subtext="The name of the GitHub repository.",
+                icon="chats_replies_solar"
+            ),
+            Input(
+                key="branch",
+                text="Branch",
+                default="Main",
+                subtext="The branch to fetch plugins from.",
+                icon="filter_custom_solar"
+            ),
+            Text(
+                text="Refresh Plugin List",
+                subtext="Fetch the latest list of plugins from GitHub.",
+                icon="msg_arrow_forward",
+                accent=True,
+                on_click=self._refresh_list
+            ),
+            Header(text="Available Plugins from GitHub")
+        ]
+        for plugin in self.available_plugins:
+            components.append(Text(
+                text=f"Install {plugin}",
+                subtext="Click to download and install this plugin",
+                icon="msg_arrow_forward",
+                accent=True,
+                on_click=self._install_plugin_wrapper(plugin)
+            ))
+        if not self.available_plugins:
+            components.append(Text(
+                text="No plugins found or failed to fetch",
+                subtext="Check your internet connection and repository settings"
+            ))
+        return components
+
+    def _install_plugin_wrapper(self, plugin):
+        """Wrapper to create on_click callback for installing a plugin"""
+        return lambda _: self.install_plugin(plugin)
+
+    def fetch_plugins(self):
+        """Fetch list of plugins from GitHub repository"""
+        owner = self.get_setting("owner", "K3NOXOFFICIAL")
+        repo = self.get_setting("repo", "exteragram-plugins")
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/"
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                plugins = [item['name'] for item in data if isinstance(item, dict) and item.get('name', '').endswith('.plugin')]
+                return plugins
+            else:
+                self.log(f"Failed to fetch plugins: status {response.status_code}")
+                return []
+        except Exception as e:
+            self.log(f"Failed to fetch plugins: {e}")
+            return []
+
+    def install_plugin(self, name):
+        """Install a plugin by downloading it from GitHub"""
+        owner = self.get_setting("owner", "K3NOXOFFICIAL")
+        repo = self.get_setting("repo", "exteragram-plugins")
+        branch = self.get_setting("branch", "Main")
+        url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{name}"
+        plugins_dir = "/data/user/0/com.exteragram.messenger/files/plugins/"
+        path = os.path.join(plugins_dir, name)
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                content = response.text
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                run_on_ui_thread(lambda: BulletinHelper.show_success(f"Successfully installed {name}. Restart Exteragram to load it.", get_last_fragment()))
+            else:
+                run_on_ui_thread(lambda: BulletinHelper.show_error(f"Failed to download {name}: HTTP {response.status_code}", get_last_fragment()))
+        except Exception as e:
+            self.log(f"Failed to install {name}: {e}")
+            run_on_ui_thread(lambda: BulletinHelper.show_error(f"Failed to install {name}: {str(e)}", get_last_fragment()))
