@@ -27,10 +27,13 @@ Once installed, the plugin will automatically encrypt messages in supported chat
 
 ## Commands
 
-The plugin supports the following commands, which must be prefixed with a dot (.):
+The plugin supports the following commands, which must be prefixed with a dot (.).
 
 - `.setkey <key>`: Sets the encryption key for the current chat. This key is required to encrypt and decrypt messages in this chat. Replace `<key>` with your chosen password or passphrase.
 - `.enc <message>` or `.encrypt <message>`: Encrypts the specified message using the set key and sends it. If no key is set for the chat, the command will be canceled with an error message.
+- `.exportkey`: Displays the encryption key for the current chat via a bulletin notification.
+- `.importkey <key>`: Imports and sets the provided key for the current chat.
+- `.showkeys`: Lists all set keys for chats via a bulletin notification (truncated for security).
 
 Encrypted messages are automatically decrypted when received. If a message cannot be decrypted (e.g., no key set), it will display as "[NO KEY]" or "[ERROR]" followed by the encrypted text.
 

@@ -15,6 +15,7 @@ import json
 from java.util import ArrayList  # type: ignore
 from org.telegram.ui.Cells import ChatMessageCell  # type: ignore
 from org.telegram.messenger import MessageObject # type: ignore
+from java.lang import Thread  # type: ignore
 
 # Standard library imports for cryptography
 import os
@@ -25,8 +26,8 @@ import hmac
 # =============================================================================
 # PLUGIN METADATA
 # =============================================================================
-__id__ = "secure_chat"
-__name__ = "Secure Chat"
+__id__ = "secure_chat_dev"
+__name__ = "Secure Chat Dev"
 __description__ = "A plugin that provides end-to-end encrypted chat functionality."
 __author__ = "@abyn0x & @setsufluff"
 __version__ = "1.3.1"
@@ -103,36 +104,41 @@ class SecureChatPlugin(BasePlugin):
                         messageObject.messageOwner.edit_date = int(time.time())
                         messageObject.messageOwner.flags |= 32768
 
-                        # Decrypt the message
-                        try:
-                            if dialog_id and str(dialog_id) in self.plugin.chat_keys:
-                                chat_key = self.plugin.chat_keys[str(dialog_id)]
-                                decrypted = decrypt(raw_text[len(MAGIC_HEADER):], chat_key)
-                            else:
-                                decrypted = "[NO KEY]"+raw_text
-                        except Exception:
-                            decrypted = "[ERROR] "+raw_text
-
-                        # Update message text with decrypted content
-                        messageObject.applyNewText(str(f"[ENCRYPTED] {decrypted}"))
-
-                        # Update UI with decrypted message
-                        messages_arr = ArrayList()
-                        messages_arr.add(messageObject)
-
-                        def update_ui():
-                            """Update the UI on the main thread"""
+                        # Decrypt in background thread
+                        def decrypt_in_background():
                             try:
-                                get_notification_center().postNotificationName(
-                                    REPLACE_MESSAGES_OBJECTS,
-                                    messageObject.getDialogId(),
-                                    messages_arr,
-                                    False,
-                                )
-                            except Exception as e:
-                                self.log(e)
-                                pass
-                        run_on_ui_thread(update_ui)
+                                chat_key = self.plugin.get_key(str(dialog_id))
+                                if chat_key:
+                                    decrypted = decrypt(raw_text[len(MAGIC_HEADER):], chat_key)
+                                else:
+                                    decrypted = "[NO KEY]"+raw_text
+                            except Exception:
+                                decrypted = "[ERROR] "+raw_text
+
+                            # Update message text with decrypted content
+                            messageObject.applyNewText(str(f"[ENCRYPTED] {decrypted}"))
+
+                            # Update UI with decrypted message
+                            messages_arr = ArrayList()
+                            messages_arr.add(messageObject)
+
+                            def update_ui():
+                                """Update the UI on the main thread"""
+                                try:
+                                    get_notification_center().postNotificationName(
+                                        REPLACE_MESSAGES_OBJECTS,
+                                        messageObject.getDialogId(),
+                                        messages_arr,
+                                        False,
+                                    )
+                                except Exception as e:
+                                    self.log(e)
+                                    pass
+                            run_on_ui_thread(update_ui)
+
+                        # Start background thread for decryption
+                        thread = Thread(decrypt_in_background)
+                        thread.start()
                 except Exception as e:
                     self.log(e)
                     pass
@@ -158,16 +164,7 @@ class SecureChatPlugin(BasePlugin):
         # LOAD PERSISTED SETTINGS
         # =============================================================================
 
-        # Load chat keys from settings
-        try:
-            chat_keys_data = self.get_setting("chat_keys", "{}")
-            self.chat_keys = (
-                json.loads(chat_keys_data) if isinstance(chat_keys_data, str) else {}
-            )
-        except:
-            self.log("No Keys loaded")
-            self.chat_keys = {}
-
+        # Keys are loaded lazily now
         self.log("Plugin loaded!")
 
     def on_plugin_unload(self):
@@ -180,9 +177,18 @@ class SecureChatPlugin(BasePlugin):
     # UTILITY METHODS
     # =============================================================================
 
-    def save_chat_keys(self):
-        """Save chat keys to persistent settings"""
-        self.set_setting("chat_keys", json.dumps(self.chat_keys))
+    def get_key(self, dialog_id_str):
+        """Lazy load key for a dialog"""
+        if dialog_id_str not in self.chat_keys:
+            # Load from settings if not in memory
+            try:
+                chat_keys_data = self.get_setting("chat_keys", "{}")
+                all_keys = json.loads(chat_keys_data) if isinstance(chat_keys_data, str) else {}
+                if dialog_id_str in all_keys:
+                    self.chat_keys[dialog_id_str] = all_keys[dialog_id_str]
+            except:
+                pass
+        return self.chat_keys.get(dialog_id_str)
 
     # =============================================================================
     # MESSAGE SEND HOOK
@@ -214,12 +220,18 @@ class SecureChatPlugin(BasePlugin):
         if message.startswith(".enc") or message.startswith(".encrypt"):
             self.log(f".enc {dialog_id} {self.chat_keys}")
 
+            command_len = len(".enc") if message.startswith(".enc") else len(".encrypt")
+            message_part = message[command_len:].lstrip()
+            if not message_part:
+                run_on_ui_thread(lambda: BulletinHelper.show_error("Message to encrypt cannot be empty!"))
+                return HookResult(strategy=HookStrategy.CANCEL)
+
             # Check if key exists for this chat
-            if dialog_id and str(dialog_id) in self.chat_keys:
-                chat_key = self.chat_keys[str(dialog_id)]
+            chat_key = self.get_key(str(dialog_id))
+            if chat_key:
                 self.log(f"chatid {chat_key}")
                 # Encrypt the message
-                params.message = MAGIC_HEADER + encrypt(message[len(".enc"):].lstrip(), chat_key)
+                params.message = MAGIC_HEADER + encrypt(message_part, chat_key)
                 return HookResult(strategy=HookStrategy.MODIFY, params=params)
             else:
                 self.log(f"aaaaa")
@@ -228,18 +240,30 @@ class SecureChatPlugin(BasePlugin):
             return HookResult(strategy=HookStrategy.CANCEL)
 
         # =============================================================================
-        # SET KEY COMMAND
+        # EXPORT KEY COMMAND
         # =============================================================================
 
-        if message.startswith(".setkey"):
-            # Set the chat key for this dialog
-            self.chat_keys[str(dialog_id)] = message[len(".setkey"):]
-            self.save_chat_keys()
-            # Show success message
-            run_on_ui_thread(lambda: BulletinHelper.show_error("Chat key updated :3"))
+        if message.startswith(".exportkey"):
+            chat_key = self.get_key(str(dialog_id))
+            if chat_key:
+                run_on_ui_thread(lambda: BulletinHelper.show_error(f"Chat key: {chat_key}"))
+            else:
+                run_on_ui_thread(lambda: BulletinHelper.show_error("No key set for this chat!"))
             return HookResult(strategy=HookStrategy.CANCEL)
 
-        return HookResult()
+        # =============================================================================
+        # IMPORT KEY COMMAND
+        # =============================================================================
+
+        if message.startswith(".importkey"):
+            key_part = message[len(".importkey"):].strip()
+            if not key_part:
+                run_on_ui_thread(lambda: BulletinHelper.show_error("Key to import cannot be empty!"))
+                return HookResult(strategy=HookStrategy.CANCEL)
+            self.chat_keys[str(dialog_id)] = key_part
+            self.save_chat_keys()
+            run_on_ui_thread(lambda: BulletinHelper.show_error("Key imported successfully!"))
+            return HookResult(strategy=HookStrategy.CANCEL)
 
 
 
