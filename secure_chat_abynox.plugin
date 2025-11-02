@@ -42,6 +42,247 @@ MAGIC_HEADER = "##secure_chat##:"
 REPLACE_MESSAGES_OBJECTS = 10
 
 # =============================================================================
+# MAIN PLUGIN CLASS
+# =============================================================================
+
+class SecureChatPlugin(BasePlugin):
+    """Main plugin class for secure chat functionality"""
+
+    def __init__(self):
+        """Initialize the plugin"""
+        super().__init__()
+        self.chat_keys = {}  # Dictionary to store chat keys per dialog
+
+    # =============================================================================
+    # PLUGIN LIFECYCLE METHODS
+    # =============================================================================
+
+    def on_plugin_load(self):
+        """Called when the plugin is loaded"""
+
+        # Try to find NotificationCenter constant dynamically
+        try:
+            from hook_utils import find_class
+            NC = find_class("org.telegram.messenger.NotificationCenter")
+            REPLACE_MESSAGES_OBJECTS = NC.replaceMessagesObjects
+            self.log(f"Setting NotificationCenter replaceMessagesObjects to {REPLACE_MESSAGES_OBJECTS}")
+        except Exception:
+            self.log("Could not find NotificationCenter")
+
+        # =============================================================================
+        # MESSAGE HOOKING CLASS
+        # =============================================================================
+
+        class ChatMessageCellMeasureTimeHook:
+            """Hook class to intercept and decrypt encrypted messages"""
+
+            def __init__(self, plugin):
+                self.plugin = plugin
+
+            def before_hooked_method(self, param):
+                """Called before the hooked method executes"""
+                try:
+                    # Validate parameters
+                    if not param.args or len(param.args) == 0:
+                        return
+
+                    messageObject = param.args[0]
+                    if not messageObject or not messageObject.messageOwner:
+                        return
+
+                    raw_text = messageObject.messageOwner.message
+                    if not isinstance(raw_text, str):
+                        return
+
+                    message_id = messageObject.getId()
+                    dialog_id = messageObject.getDialogId()
+
+                    # Check if message is encrypted
+                    if raw_text.startswith(MAGIC_HEADER):
+                        # Mark message as edited
+                        messageObject.messageOwner.edit_date = int(time.time())
+                        messageObject.messageOwner.flags |= 32768
+
+                        # Decrypt the message
+                        try:
+                            if dialog_id and str(dialog_id) in self.plugin.chat_keys:
+                                chat_key = self.plugin.chat_keys[str(dialog_id)]
+                                decrypted = decrypt(raw_text[len(MAGIC_HEADER):], chat_key)
+                            else:
+                                decrypted = "[NO KEY]"+raw_text
+                        except Exception:
+                            decrypted = "[ERROR] "+raw_text
+
+                        # Update message text with decrypted content
+                        messageObject.applyNewText(str(f"[ENCRYPTED] {decrypted}"))
+
+                        # Update UI with decrypted message
+                        messages_arr = ArrayList()
+                        messages_arr.add(messageObject)
+
+                        def update_ui():
+                            """Update the UI on the main thread"""
+                            try:
+                                get_notification_center().postNotificationName(
+                                    REPLACE_MESSAGES_OBJECTS,
+                                    messageObject.getDialogId(),
+                                    messages_arr,
+                                    False,
+                                )
+                            except Exception as e:
+                                self.log(e)
+                                pass
+                        run_on_ui_thread(update_ui)
+                except Exception as e:
+                    self.log(e)
+                    pass
+
+        # =============================================================================
+        # HOOK REGISTRATION
+        # =============================================================================
+
+        # Add send message hook
+        self.add_on_send_message_hook(priority=100)
+
+        # Hook the measureTime method to intercept incoming messages
+        try:
+            method_measure = ChatMessageCell.getClass().getDeclaredMethod(
+                "measureTime", MessageObject
+            )
+            self.hook_method(method_measure, ChatMessageCellMeasureTimeHook(self))
+        except Exception as e:
+            self.log(e)
+            pass
+
+        # =============================================================================
+        # LOAD PERSISTED SETTINGS
+        # =============================================================================
+
+        # Load chat keys from settings
+        try:
+            chat_keys_data = self.get_setting("chat_keys", "{}")
+            self.chat_keys = (
+                json.loads(chat_keys_data) if isinstance(chat_keys_data, str) else {}
+            )
+        except:
+            self.log("No Keys loaded")
+            self.chat_keys = {}
+
+        self.log("Plugin loaded!")
+
+    def on_plugin_unload(self):
+        """Called when the plugin is unloaded"""
+        # e.g. unregister hooks, clean up resources
+        self.log("Plugin unloaded!")
+        pass
+
+    # =============================================================================
+    # UTILITY METHODS
+    # =============================================================================
+
+    def save_chat_keys(self):
+        """Save chat keys to persistent settings"""
+        self.set_setting("chat_keys", json.dumps(self.chat_keys))
+
+    # =============================================================================
+    # MESSAGE SEND HOOK
+    # =============================================================================
+
+    def on_send_message_hook(self, account: int, params: Any) -> HookResult:
+        """Hook called when sending a message"""
+
+        # Validate message parameters
+        if not hasattr(params, 'message') or not isinstance(params.message, str):
+            return HookResult()
+
+        message = params.message.strip()
+        if not message:
+            return HookResult()
+
+        self.log(message)
+
+        # Only process commands starting with "."
+        if not message.startswith("."):
+            return HookResult()
+
+        dialog_id = getattr(params, 'peer', None) or getattr(params, 'dialog_id', None)
+
+        # =============================================================================
+        # ENCRYPT COMMAND
+        # =============================================================================
+
+        if message.startswith(".enc") or message.startswith(".encrypt"):
+            self.log(f".enc {dialog_id} {self.chat_keys}")
+
+            # Check if key exists for this chat
+            if dialog_id and str(dialog_id) in self.chat_keys:
+                chat_key = self.chat_keys[str(dialog_id)]
+                self.log(f"chatid {chat_key}")
+                # Encrypt the message
+                params.message = MAGIC_HEADER + encrypt(message[len(".enc"):].lstrip(), chat_key)
+                return HookResult(strategy=HookStrategy.MODIFY, params=params)
+            else:
+                self.log(f"aaaaa")
+                # Show error if no key set
+                run_on_ui_thread(lambda: BulletinHelper.show_error("Unknown chat key! canceled"))
+            return HookResult(strategy=HookStrategy.CANCEL)
+
+        # =============================================================================
+        # SET KEY COMMAND
+        # =============================================================================
+
+        if message.startswith(".setkey"):
+            # Set the chat key for this dialog
+            self.chat_keys[str(dialog_id)] = message[len(".setkey"):]
+            self.save_chat_keys()
+            # Show success message
+            run_on_ui_thread(lambda: BulletinHelper.show_error("Chat key updated :3"))
+            return HookResult(strategy=HookStrategy.CANCEL)
+
+        return HookResult()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# =============================================================================
 # CHACHA20POLY1305 IMPLEMENTATION
 # =============================================================================
 # Pure Python implementation of ChaCha20Poly1305 AEAD cipher
@@ -415,203 +656,3 @@ def decrypt(b64text: str, password: str) -> str:
     cipher = ChaCha20Poly1305(key)
     plaintext = cipher.decrypt(nonce, ciphertext, None)
     return plaintext.decode("utf-8")
-
-# =============================================================================
-# MAIN PLUGIN CLASS
-# =============================================================================
-
-class SecureChatPlugin(BasePlugin):
-    """Main plugin class for secure chat functionality"""
-
-    def __init__(self):
-        """Initialize the plugin"""
-        super().__init__()
-        self.chat_keys = {}  # Dictionary to store chat keys per dialog
-
-    # =============================================================================
-    # PLUGIN LIFECYCLE METHODS
-    # =============================================================================
-
-    def on_plugin_load(self):
-        """Called when the plugin is loaded"""
-
-        # Try to find NotificationCenter constant dynamically
-        try:
-            from hook_utils import find_class
-            NC = find_class("org.telegram.messenger.NotificationCenter")
-            REPLACE_MESSAGES_OBJECTS = NC.replaceMessagesObjects
-            self.log(f"Setting NotificationCenter replaceMessagesObjects to {REPLACE_MESSAGES_OBJECTS}")
-        except Exception:
-            self.log("Could not find NotificationCenter")
-
-        # =============================================================================
-        # MESSAGE HOOKING CLASS
-        # =============================================================================
-
-        class ChatMessageCellMeasureTimeHook:
-            """Hook class to intercept and decrypt encrypted messages"""
-
-            def __init__(self, plugin):
-                self.plugin = plugin
-
-            def before_hooked_method(self, param):
-                """Called before the hooked method executes"""
-                try:
-                    # Validate parameters
-                    if not param.args or len(param.args) == 0:
-                        return
-
-                    messageObject = param.args[0]
-                    if not messageObject or not messageObject.messageOwner:
-                        return
-
-                    raw_text = messageObject.messageOwner.message
-                    if not isinstance(raw_text, str):
-                        return
-
-                    message_id = messageObject.getId()
-                    dialog_id = messageObject.getDialogId()
-
-                    # Check if message is encrypted
-                    if raw_text.startswith(MAGIC_HEADER):
-                        # Mark message as edited
-                        messageObject.messageOwner.edit_date = int(time.time())
-                        messageObject.messageOwner.flags |= 32768
-
-                        # Decrypt the message
-                        try:
-                            if dialog_id and str(dialog_id) in self.plugin.chat_keys:
-                                chat_key = self.plugin.chat_keys[str(dialog_id)]
-                                decrypted = decrypt(raw_text[len(MAGIC_HEADER):], chat_key)
-                            else:
-                                decrypted = "[NO KEY]"+raw_text
-                        except Exception:
-                            decrypted = "[ERROR] "+raw_text
-
-                        # Update message text with decrypted content
-                        messageObject.applyNewText(str(f"[ENCRYPTED] {decrypted}"))
-
-                        # Update UI with decrypted message
-                        messages_arr = ArrayList()
-                        messages_arr.add(messageObject)
-
-                        def update_ui():
-                            """Update the UI on the main thread"""
-                            try:
-                                get_notification_center().postNotificationName(
-                                    REPLACE_MESSAGES_OBJECTS,
-                                    messageObject.getDialogId(),
-                                    messages_arr,
-                                    False,
-                                )
-                            except Exception as e:
-                                self.log(e)
-                                pass
-                        run_on_ui_thread(update_ui)
-                except Exception as e:
-                    self.log(e)
-                    pass
-
-        # =============================================================================
-        # HOOK REGISTRATION
-        # =============================================================================
-
-        # Add send message hook
-        self.add_on_send_message_hook(priority=100)
-
-        # Hook the measureTime method to intercept incoming messages
-        try:
-            method_measure = ChatMessageCell.getClass().getDeclaredMethod(
-                "measureTime", MessageObject
-            )
-            self.hook_method(method_measure, ChatMessageCellMeasureTimeHook(self))
-        except Exception as e:
-            self.log(e)
-            pass
-
-        # =============================================================================
-        # LOAD PERSISTED SETTINGS
-        # =============================================================================
-
-        # Load chat keys from settings
-        try:
-            chat_keys_data = self.get_setting("chat_keys", "{}")
-            self.chat_keys = (
-                json.loads(chat_keys_data) if isinstance(chat_keys_data, str) else {}
-            )
-        except:
-            self.log("No Keys loaded")
-            self.chat_keys = {}
-
-        self.log("Plugin loaded!")
-
-    def on_plugin_unload(self):
-        """Called when the plugin is unloaded"""
-        # e.g. unregister hooks, clean up resources
-        self.log("Plugin unloaded!")
-        pass
-
-    # =============================================================================
-    # UTILITY METHODS
-    # =============================================================================
-
-    def save_chat_keys(self):
-        """Save chat keys to persistent settings"""
-        self.set_setting("chat_keys", json.dumps(self.chat_keys))
-
-    # =============================================================================
-    # MESSAGE SEND HOOK
-    # =============================================================================
-
-    def on_send_message_hook(self, account: int, params: Any) -> HookResult:
-        """Hook called when sending a message"""
-
-        # Validate message parameters
-        if not hasattr(params, 'message') or not isinstance(params.message, str):
-            return HookResult()
-
-        message = params.message.strip()
-        if not message:
-            return HookResult()
-
-        self.log(message)
-
-        # Only process commands starting with "."
-        if not message.startswith("."):
-            return HookResult()
-
-        dialog_id = getattr(params, 'peer', None) or getattr(params, 'dialog_id', None)
-
-        # =============================================================================
-        # ENCRYPT COMMAND
-        # =============================================================================
-
-        if message.startswith(".enc") or message.startswith(".encrypt"):
-            self.log(f".enc {dialog_id} {self.chat_keys}")
-
-            # Check if key exists for this chat
-            if dialog_id and str(dialog_id) in self.chat_keys:
-                chat_key = self.chat_keys[str(dialog_id)]
-                self.log(f"chatid {chat_key}")
-                # Encrypt the message
-                params.message = MAGIC_HEADER + encrypt(message[len(".enc"):].lstrip(), chat_key)
-                return HookResult(strategy=HookStrategy.MODIFY, params=params)
-            else:
-                self.log(f"aaaaa")
-                # Show error if no key set
-                run_on_ui_thread(lambda: BulletinHelper.show_error("Unknown chat key! canceled"))
-            return HookResult(strategy=HookStrategy.CANCEL)
-
-        # =============================================================================
-        # SET KEY COMMAND
-        # =============================================================================
-
-        if message.startswith(".setkey"):
-            # Set the chat key for this dialog
-            self.chat_keys[str(dialog_id)] = message[len(".setkey"):]
-            self.save_chat_keys()
-            # Show success message
-            run_on_ui_thread(lambda: BulletinHelper.show_error("Chat key updated :3"))
-            return HookResult(strategy=HookStrategy.CANCEL)
-
-        return HookResult()
