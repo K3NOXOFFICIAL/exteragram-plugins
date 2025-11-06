@@ -1,0 +1,92 @@
+__id__ = "export_messages"
+__name__ = "Export Messages"
+__description__ = "Exports all messages in the chat as a TXT file [.export]"
+__author__ = "@setsufluff"
+__version__ = "1.1.2"
+__icon__ = "exteraPlugins/1"
+__min_version__ = "11.12.0"
+
+from base_plugin import BasePlugin, HookResult, HookStrategy
+from typing import Any
+from client_utils import send_request, RequestCallback, get_messages_controller, send_document, get_user_config, run_on_queue, run_on_ui_thread
+from org.telegram.tgnet import TLRPC
+from android_utils import log
+from file_utils import write_file, get_plugins_dir, ensure_dir_exists
+from ui.bulletin import BulletinHelper
+import os
+
+class ExportMessagesPlugin(BasePlugin):
+    def on_plugin_load(self):
+        self.add_on_send_message_hook()
+
+    def on_send_message_hook(self, account: int, params: Any) -> HookResult:
+        if not isinstance(params.message, str) or not params.message.startswith(".export"):
+            return HookResult()
+        
+        log("Export command received")
+        
+        def _export():
+            try:
+                peer_id = params.peer
+                log(f"Peer ID: {peer_id}")
+                input_peer = get_messages_controller().getInputPeer(peer_id)
+                if not input_peer:
+                    log("Could not get input peer")
+                    run_on_ui_thread(lambda: BulletinHelper.show_error("Could not get chat info"))
+                    return
+                
+                self.all_messages = []
+                self.fetch_messages(account, input_peer, 0)
+                run_on_ui_thread(lambda: BulletinHelper.show_info("Starting export..."))
+            except Exception as e:
+                log(f"Export error: {e}")
+                run_on_ui_thread(lambda: BulletinHelper.show_error(f"Export error: {e}"))
+        
+        run_on_queue(_export)
+        return HookResult(strategy=HookStrategy.CANCEL)
+    
+    def fetch_messages(self, account, input_peer, offset_id):
+        req = TLRPC.TL_messages_getHistory()
+        req.peer = input_peer
+        req.limit = 100
+        req.offset_id = offset_id
+        req.offset_date = 0
+        req.add_offset = 0
+        req.max_id = 0
+        req.min_id = 0
+        req.hash = 0
+        
+        def callback(response, error):
+            if error:
+                log(f"Error fetching messages: {error.text}")
+                run_on_ui_thread(lambda: BulletinHelper.show_error("Failed to export messages"))
+                return
+            if response and hasattr(response, 'messages'):
+                messages = response.messages
+                self.all_messages.extend(messages)
+                if len(messages) == req.limit:
+                    # Fetch more
+                    last_msg = messages[-1]
+                    self.fetch_messages(account, input_peer, last_msg.id)
+                else:
+                    # Done, save
+                    content = ""
+                    for msg in reversed(self.all_messages):  # Reverse to chronological order
+                        if hasattr(msg, 'message') and msg.message:
+                            date = getattr(msg, 'date', 0)
+                            from_id = getattr(msg, 'from_id', 'Unknown')
+                            content += f"{date} {from_id}: {msg.message}\n"
+                    
+                    # Send as file to Saved Messages
+                    saved_peer = get_user_config().getCurrentUser().id
+                    plugin_dir = os.path.join(get_plugins_dir(), "export_messages")
+                    ensure_dir_exists(plugin_dir)
+                    file_path = os.path.join(plugin_dir, "chat_export.txt")
+                    write_file(file_path, content)
+                    log(f"File written to {file_path}")
+                    send_document(saved_peer, file_path, caption=f"Exported {len(self.all_messages)} messages")
+                    run_on_ui_thread(lambda: BulletinHelper.show_info(f"Exported {len(self.all_messages)} messages to Saved Messages as file"))
+            else:
+                run_on_ui_thread(lambda: BulletinHelper.show_error("No messages found"))
+        
+        send_request(req, RequestCallback(callback))

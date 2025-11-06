@@ -1,0 +1,103 @@
+__id__ = "checklist_to_todo"
+__name__ = "Checklist to Microsoft To-Do"
+__description__ = "Add Telegram checklist items to Microsoft To-Do lists via long-press menu."
+__author__ = "@setsufluff"
+__version__ = "1.0.0"
+__icon__ = "exteraPlugins/1"
+__min_version__ = "11.12.0"
+
+import requests
+from base_plugin import BasePlugin, MenuItemData, MenuItemType
+from client_utils import run_on_queue, get_last_fragment
+from ui.alert import AlertDialogBuilder
+from ui.bulletin import BulletinHelper
+from android_utils import log, run_on_ui_thread
+from ui.settings import Input
+import re
+
+class ChecklistToTodoPlugin(BasePlugin):
+    def on_plugin_load(self):
+        # Add the context menu item
+        self.add_menu_item(
+            MenuItemData(
+                menu_type=MenuItemType.MESSAGE_CONTEXT_MENU,
+                text="Add to Microsoft To-Do",
+                on_click=self.handle_add_to_todo,
+                condition="message.messageText && message.messageText.split('\n').length > 1",  # Show for messages with multiple lines (potential checklists)
+                icon="msg_list"
+            )
+        )
+
+    def handle_add_to_todo(self, context):
+        message = context.get("message")
+        if not message or not message.messageText:
+            BulletinHelper.show_error("No message text found.")
+            return
+
+        checklist_items = self.parse_checklist(message.messageText)
+        if not checklist_items:
+            BulletinHelper.show_error("No checklist items detected in this message.")
+            return
+
+        # Get settings
+        access_token = self.get_setting("access_token", "")
+        list_id = self.get_setting("list_id", "")
+        if not access_token or not list_id:
+            BulletinHelper.show_error("Please configure Microsoft access token and list ID in settings.")
+            return
+
+        # Show progress dialog
+        current_fragment = get_last_fragment()
+        if current_fragment:
+            activity = current_fragment.getParentActivity()
+            if activity:
+                progress_dialog = AlertDialogBuilder(activity, AlertDialogBuilder.ALERT_TYPE_SPINNER)
+                progress_dialog.set_title("Adding to To-Do...")
+                progress_dialog.set_cancelable(False)
+                progress_dialog.show()
+
+                # Run API call in background
+                run_on_queue(lambda: self.add_items_to_todo(checklist_items, access_token, list_id, progress_dialog))
+            else:
+                BulletinHelper.show_error("Unable to get activity for dialog.")
+        else:
+            BulletinHelper.show_error("Unable to get current fragment for dialog.")
+
+    def parse_checklist(self, text):
+        # For Telegram checklists, assume each line is an unchecked item
+        lines = text.split('\n')
+        items = []
+        for line in lines:
+            line = line.strip()
+            if line:
+                # Remove any leading - or * if present
+                if line.startswith('- ') or line.startswith('* '):
+                    line = line[2:].strip()
+                items.append({"title": line, "status": "notStarted"})
+        return items
+
+    def add_items_to_todo(self, items, access_token, list_id, progress_dialog):
+        headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+        url = f"https://graph.microsoft.com/v1.0/me/todo/lists/{list_id}/tasks"
+
+        success_count = 0
+        for item in items:
+            payload = {"title": item["title"], "status": item["status"]}
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=10)
+                if response.status_code == 201:
+                    success_count += 1
+                else:
+                    log(f"Failed to add task '{item['title']}': {response.status_code} - {response.text}")
+            except Exception as e:
+                log(f"Error adding task '{item['title']}': {str(e)}")
+
+        # Dismiss dialog and show result
+        run_on_ui_thread(lambda: progress_dialog.dismiss())
+        run_on_ui_thread(lambda: BulletinHelper.show_info(f"Successfully added {success_count}/{len(items)} items to To-Do list."))
+
+    def create_settings(self):
+        return [
+            Input(key="access_token", text="Microsoft Access Token", subtext="Obtain from Microsoft Graph API (scopes: Tasks.ReadWrite)", default=""),
+            Input(key="list_id", text="To-Do List ID", subtext="ID of the Microsoft To-Do list to add items to", default="")
+        ]
