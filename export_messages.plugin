@@ -2,7 +2,7 @@ __id__ = "export_messages"
 __name__ = "Export Messages"
 __description__ = "Exports all messages in the chat as a TXT file [.export]"
 __author__ = "@setsufluff"
-__version__ = "1.1.2"
+__version__ = "1.1.4"
 __icon__ = "exteraPlugins/1"
 __min_version__ = "11.12.0"
 
@@ -14,6 +14,7 @@ from android_utils import log
 from file_utils import write_file, get_plugins_dir, ensure_dir_exists
 from ui.bulletin import BulletinHelper
 import os
+from datetime import datetime
 
 class ExportMessagesPlugin(BasePlugin):
     def on_plugin_load(self):
@@ -36,6 +37,7 @@ class ExportMessagesPlugin(BasePlugin):
                     return
                 
                 self.all_messages = []
+                self.max_messages = 1000
                 self.fetch_messages(account, input_peer, 0)
                 run_on_ui_thread(lambda: BulletinHelper.show_info("Starting export..."))
             except Exception as e:
@@ -64,7 +66,8 @@ class ExportMessagesPlugin(BasePlugin):
             if response and hasattr(response, 'messages'):
                 messages = response.messages
                 self.all_messages.extend(messages)
-                if len(messages) == req.limit:
+                self.all_messages = self.all_messages[:self.max_messages]  # Trim to limit
+                if len(messages) == req.limit and len(self.all_messages) < self.max_messages:
                     # Fetch more
                     last_msg = messages[-1]
                     self.fetch_messages(account, input_peer, last_msg.id)
@@ -74,8 +77,16 @@ class ExportMessagesPlugin(BasePlugin):
                     for msg in reversed(self.all_messages):  # Reverse to chronological order
                         if hasattr(msg, 'message') and msg.message:
                             date = getattr(msg, 'date', 0)
-                            from_id = getattr(msg, 'from_id', 'Unknown')
-                            content += f"{date} {from_id}: {msg.message}\n"
+                            date_str = datetime.fromtimestamp(date).strftime('%Y-%m-%d %H:%M:%S') if date else 'Unknown'
+                            sender_id = 'Unknown'
+                            if hasattr(msg, 'from_id') and msg.from_id:
+                                if hasattr(msg.from_id, 'user_id'):
+                                    sender_id = str(msg.from_id.user_id)
+                                elif hasattr(msg.from_id, 'channel_id'):
+                                    sender_id = str(msg.from_id.channel_id)
+                                elif hasattr(msg.from_id, 'chat_id'):
+                                    sender_id = str(msg.from_id.chat_id)
+                            content += f"{date_str} {sender_id}: {msg.message}\n"
                     
                     # Send as file to Saved Messages
                     saved_peer = get_user_config().getCurrentUser().id
@@ -84,7 +95,7 @@ class ExportMessagesPlugin(BasePlugin):
                     file_path = os.path.join(plugin_dir, "chat_export.txt")
                     write_file(file_path, content)
                     log(f"File written to {file_path}")
-                    send_document(saved_peer, file_path, caption=f"Exported {len(self.all_messages)} messages")
+                    send_document(saved_peer, file_path, caption=f"Exported {len(self.all_messages)} messages (last {self.max_messages})")
                     run_on_ui_thread(lambda: BulletinHelper.show_info(f"Exported {len(self.all_messages)} messages to Saved Messages as file"))
             else:
                 run_on_ui_thread(lambda: BulletinHelper.show_error("No messages found"))
